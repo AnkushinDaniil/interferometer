@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/go-echarts/go-echarts/v2/charts"
@@ -36,7 +37,46 @@ func main() {
 	fmt.Println("PeriodNumber", PeriodNumber)
 	fmt.Println("WinSize", WinSize)
 
-	file, err := os.Open("stream_20240924-110038.bin")
+	filenames := make([]string, 0)
+
+	dir, err := os.Open(".")
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	files, err := dir.Readdir(0)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	for _, v := range files {
+		if filepath.Ext(v.Name()) == ".bin" {
+			filenames = append(filenames, v.Name())
+			fmt.Printf("Found file: %s\n", v.Name())
+		}
+	}
+
+	visibilities := make([][]float64, len(filenames))
+	for i, filename := range filenames {
+		visibilities[i] = getVisibilityData(filename)
+		fmt.Printf("Visibility data for %s is calculated\n", filename)
+	}
+
+	line := createChart(visibilities)
+	fmt.Println("Chart created")
+
+	f, _ := os.Create("Visibility.html")
+	defer f.Close()
+	line.Render(f)
+	fmt.Println("Chart saved")
+}
+
+func getVisibilityData(filename string) []float64 {
+	minimum, err := findMinimumInFile(filename)
+	if err != nil {
+		log.Fatal(err)
+	}
+	file, err := os.Open(filename)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -45,7 +85,7 @@ func main() {
 	br := bufio.NewReader(file)
 
 	valueChan := make(chan int32, 1<<10)
-	resultChan := make(chan [2]int32, 1<<10)
+	visibilityChan := make(chan float64, 1<<10)
 	values := [8]byte{}
 
 	var wg sync.WaitGroup
@@ -54,67 +94,77 @@ func main() {
 	go func() {
 		defer close(valueChan)
 		defer wg.Done()
-		for {
-			_, err := io.ReadFull(br, values[:])
-			if err != nil {
-				if err != io.EOF {
-					log.Fatal(err)
-				}
-				break
-			}
-			valueChan <- int32(binary.BigEndian.Uint64(values[:]))
-		}
+		readValues(br, values, valueChan)
 	}()
 
 	wg.Add(1)
 	go func() {
-		defer close(resultChan)
+		defer close(visibilityChan)
 		defer wg.Done()
-		values := make([]int32, WinSize)
-		i := 0
-		for value := range valueChan {
-			values[i] = value
-			i++
-			if i == WinSize {
-				min, max := minMax(values)
-				resultChan <- [2]int32{min, max}
-				i = 0
-			}
-		}
+		calculateVisibility(valueChan, minimum, visibilityChan)
 	}()
 
-	maxes := make([]float32, 0, int(DataLength)/WinSize)
-	mins := make([]float32, 0, int(DataLength)/WinSize)
-	minimum := float32(0)
-
-	for result := range resultChan {
-		mins = append(mins, float32(result[0]))
-		maxes = append(maxes, float32(result[1]))
-		if float32(result[0]) < minimum {
-			minimum = float32(result[0])
-		}
+	visibility := make([]float64, 0, int(DataLength)/WinSize+1)
+	for visibilityValue := range visibilityChan {
+		visibility = append(visibility, visibilityValue)
 	}
 	wg.Wait()
-
-	for i := range maxes {
-		maxes[i] -= minimum
-		mins[i] -= minimum
-	}
-
-	visibility := make([]float32, len(maxes))
-
-	for i := range maxes {
-		visibility[i] = (maxes[i] - mins[i]) / (maxes[i] + mins[i])
-	}
-
-	line := createChart([][]float32{visibility})
-
-	f, _ := os.Create("Visibility.html")
-	defer f.Close()
-	line.Render(f)
+	return visibility
 }
 
-func minMax(arr []int32) (min, max int32) {
+func readValues(br *bufio.Reader, values [8]byte, valueChan chan int32) {
+	for {
+		_, err := io.ReadFull(br, values[:])
+		if err != nil {
+			if err != io.EOF {
+				log.Fatal(err)
+			}
+			break
+		}
+		valueChan <- int32(binary.BigEndian.Uint64(values[:]))
+	}
+}
+
+func calculateVisibility(valueChan chan int32, minimum int32, visibilityChan chan float64) {
+	values := make([]int32, WinSize)
+	i := 0
+	for value := range valueChan {
+		values[i] = value - minimum
+		i++
+		if i == WinSize {
+			min, max := minMaxSlice(values)
+			visibilityChan <- float64(max-min) / float64(max+min)
+			i = 0
+		}
+	}
+}
+
+func findMinimumInFile(filename string) (int32, error) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+	br := bufio.NewReader(file)
+	values := [8]byte{}
+	minimum := int32(0)
+	for {
+		_, err := io.ReadFull(br, values[:])
+		if err != nil {
+			if err != io.EOF {
+				log.Fatal(err)
+			}
+			break
+		}
+		value := int32(binary.BigEndian.Uint64(values[:]))
+		if value < minimum {
+			minimum = value
+		}
+	}
+	return minimum, nil
+}
+
+func minMaxSlice[T cmp.Ordered](arr []T) (min, max T) {
 	min, max = arr[0], arr[0]
 	for _, v := range arr[1:] {
 		if v < min {
