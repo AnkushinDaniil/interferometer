@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"os"
 	"path/filepath"
 	"sync"
@@ -19,23 +20,23 @@ var (
 	Time         = 80.0                // seconds
 	DeltaT       = 1e-6                // seconds
 	DataLength   = Time / DeltaT       // number of samples
-	Speed        = 0.008               // m/s
+	Speed        = 0.016               // m/s
 	Length       = Time * Speed        // meters
 	DeltaX       = Length / DataLength // meters
 	Lambda       = 1550e-9             // meters
-	PeriodNumber = 30
+	PeriodNumber = 10
 	WinSize      = int(Lambda/DeltaX) * PeriodNumber
 )
 
 func main() {
-	fmt.Println("Time", Time)
-	fmt.Println("DataLength", DataLength)
-	fmt.Println("Speed", Speed)
-	fmt.Println("Length", Length)
-	fmt.Println("DeltaX", DeltaX)
-	fmt.Println("Lambda", Lambda)
-	fmt.Println("PeriodNumber", PeriodNumber)
-	fmt.Println("WinSize", WinSize)
+	// fmt.Println("Time", Time)
+	// fmt.Println("DataLength", DataLength)
+	// fmt.Println("Speed", Speed)
+	// fmt.Println("Length", Length)
+	// fmt.Println("DeltaX", DeltaX)
+	// fmt.Println("Lambda", Lambda)
+	// fmt.Println("PeriodNumber", PeriodNumber)
+	// fmt.Println("WinSize", WinSize)
 
 	filenames := make([]string, 0)
 
@@ -58,7 +59,10 @@ func main() {
 
 	visibilities := make([][]float64, len(filenames))
 	for i, filename := range filenames {
-		visibilities[i] = getVisibilityData(filename)
+		visibilities[i], err = getVisibilityData(filename)
+		if err != nil {
+			log.Fatal(err)
+		}
 		fmt.Printf("Visibility data for %s is calculated\n", filename)
 	}
 
@@ -71,7 +75,7 @@ func main() {
 	fmt.Println("Chart saved")
 }
 
-func getVisibilityData(filename string) []float64 {
+func getVisibilityData(filename string) ([]float64, error) {
 	minimum, err := findMinimumInFile(filename)
 	if err != nil {
 		log.Fatal(err)
@@ -82,11 +86,16 @@ func getVisibilityData(filename string) []float64 {
 	}
 	defer file.Close()
 
+	fi, err := file.Stat()
+	if err != nil {
+		return nil, nil
+	}
+	length := fi.Size() / 8
+
 	br := bufio.NewReader(file)
 
 	valueChan := make(chan int32, 1<<10)
 	visibilityChan := make(chan float64, 1<<10)
-	values := [8]byte{}
 
 	var wg sync.WaitGroup
 
@@ -94,7 +103,7 @@ func getVisibilityData(filename string) []float64 {
 	go func() {
 		defer close(valueChan)
 		defer wg.Done()
-		readValues(br, values, valueChan)
+		readValues(br, valueChan)
 	}()
 
 	wg.Add(1)
@@ -104,15 +113,16 @@ func getVisibilityData(filename string) []float64 {
 		calculateVisibility(valueChan, minimum, visibilityChan)
 	}()
 
-	visibility := make([]float64, 0, int(DataLength)/WinSize+1)
+	visibility := make([]float64, 0, (int(length)+WinSize)/WinSize)
 	for visibilityValue := range visibilityChan {
 		visibility = append(visibility, visibilityValue)
 	}
 	wg.Wait()
-	return visibility
+	return visibility, nil
 }
 
-func readValues(br *bufio.Reader, values [8]byte, valueChan chan int32) {
+func readValues(br *bufio.Reader, valueChan chan<- int32) {
+	values := [8]byte{}
 	for {
 		_, err := io.ReadFull(br, values[:])
 		if err != nil {
@@ -125,16 +135,22 @@ func readValues(br *bufio.Reader, values [8]byte, valueChan chan int32) {
 	}
 }
 
-func calculateVisibility(valueChan chan int32, minimum int32, visibilityChan chan float64) {
-	values := make([]int32, WinSize)
+func calculateVisibility(valueChan <-chan int32, minimum int32, visibilityChan chan<- float64) {
 	i := 0
+	min, max := int32(math.MaxInt32), int32(0)
 	for value := range valueChan {
-		values[i] = value - minimum
+		value -= minimum
+		if value < min {
+			min = value
+		}
+		if value > max {
+			max = value
+		}
 		i++
 		if i == WinSize {
-			min, max := minMaxSlice(values)
 			visibilityChan <- float64(max-min) / float64(max+min)
 			i = 0
+			min, max = math.MaxInt32, int32(0)
 		}
 	}
 }
@@ -162,19 +178,6 @@ func findMinimumInFile(filename string) (int32, error) {
 		}
 	}
 	return minimum, nil
-}
-
-func minMaxSlice[T cmp.Ordered](arr []T) (min, max T) {
-	min, max = arr[0], arr[0]
-	for _, v := range arr[1:] {
-		if v < min {
-			min = v
-		}
-		if v > max {
-			max = v
-		}
-	}
-	return min, max
 }
 
 func createChart[T cmp.Ordered](data [][]T) *charts.Line {
