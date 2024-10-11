@@ -9,6 +9,8 @@ import (
 	"log"
 	"math"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -44,6 +46,8 @@ func (l *Line) SetVisibilityFromFile(filename string) error {
 	defer func() {
 		fmt.Printf("Visibility data for %s is calculated in %v\n", filename, time.Since(timestamp))
 	}()
+
+	l.name = strings.TrimSuffix(filename, filepath.Ext(filename))
 
 	var err error
 	l.minimum, err = findMinimumInFile(filename)
