@@ -195,7 +195,7 @@ func (a *App) createChart() *charts.Line {
 	line.SetXAxis(x)
 
 	for i := range a.lines {
-		line.AddSeries(fmt.Sprintf("Видность %d", i), a.lines[i].Data())
+		line.AddSeries(fmt.Sprintf("Видность %s", a.lines[i].Name()), a.lines[i].Data())
 	}
 	return line
 }
