@@ -187,18 +187,16 @@ func (a *App) createChart() *charts.Line {
 		}),
 	)
 
-	// zeroIdx := findIdxOfMax(data[0])
 	zeroIdx := 0
-	// fmt.Println(zeroIdx)
-	x := make([]float64, len(a.lines[0]))
-	dx := a.Length / float64(len(a.lines[0]))
-	for i := range a.lines[0] {
+	x := make([]float64, len(a.lines[0].Data()))
+	dx := a.Params.Length / float64(len(a.lines[0].Data()))
+	for i := range a.lines[0].Data() {
 		x[i] = float64(i-zeroIdx) * dx
 	}
 	line.SetXAxis(x)
 
 	for i := range a.lines {
-		line.AddSeries(fmt.Sprintf("Видность %d", i), a.lines[i])
+		line.AddSeries(fmt.Sprintf("Видность %d", i), a.lines[i].Data())
 	}
 
 	return line

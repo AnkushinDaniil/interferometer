@@ -21,6 +21,7 @@ type Line struct {
 	minimum int32
 	params  *Parameters
 	winSize int
+	zeroIdx int
 }
 
 func NewLine(name string, params *Parameters) (*Line, error) {
@@ -85,9 +86,9 @@ func (l *Line) SetVisibilityFromFile(filename string) error {
 	dx := l.params.Speed * l.params.DeltaT
 	l.winSize = int(l.params.Lambda/dx) * l.params.PeriodNumber
 
-	visibility := make([]opts.LineData, 0, (int(signalLength)+l.winSize)/l.winSize)
+	l.data = make([]opts.LineData, 0, (int(signalLength)+l.winSize)/l.winSize)
 	for visibilityValue := range visibilityChan {
-		visibility = append(visibility, opts.LineData{Value: visibilityValue})
+		l.data = append(l.data, opts.LineData{Value: visibilityValue})
 	}
 	wg.Wait()
 	return nil
@@ -134,6 +135,8 @@ func readValues(br *bufio.Reader, valueChan chan<- int32) {
 
 func (l *Line) calculateVisibility(valueChan <-chan int32, visibilityChan chan<- float64) {
 	i := 0
+	j := 0
+	maxVisibility := float64(0)
 	minimum, maximum := int32(math.MaxInt32), int32(0)
 	for value := range valueChan {
 		value -= l.minimum
@@ -145,7 +148,13 @@ func (l *Line) calculateVisibility(valueChan <-chan int32, visibilityChan chan<-
 		}
 		i++
 		if i == l.winSize {
-			visibilityChan <- float64(maximum-minimum) / float64(maximum+minimum)
+			visibilityValue := float64(maximum-minimum) / float64(maximum+minimum)
+			if visibilityValue > maxVisibility {
+				maxVisibility = visibilityValue
+				l.zeroIdx = j
+			}
+			visibilityChan <- visibilityValue
+
 			i = 0
 			minimum, maximum = math.MaxInt32, int32(0)
 		}
