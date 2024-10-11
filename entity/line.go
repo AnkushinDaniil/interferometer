@@ -160,3 +160,7 @@ func (l *Line) calculateVisibility(valueChan <-chan int32, visibilityChan chan<-
 		}
 	}
 }
+
+func (l *Line) GetZeroIdx() int {
+	return l.zeroIdx
+}

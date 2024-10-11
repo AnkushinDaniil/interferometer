@@ -1,7 +1,6 @@
 package app
 
 import (
-	"cmp"
 	"context"
 	"fmt"
 	"os"
@@ -187,9 +186,9 @@ func (a *App) createChart() *charts.Line {
 		}),
 	)
 
-	zeroIdx := 0
 	x := make([]float64, len(a.lines[0].Data()))
 	dx := a.Params.Length / float64(len(a.lines[0].Data()))
+	zeroIdx := a.lines[0].GetZeroIdx()
 	for i := range a.lines[0].Data() {
 		x[i] = float64(i-zeroIdx) * dx
 	}
@@ -198,16 +197,5 @@ func (a *App) createChart() *charts.Line {
 	for i := range a.lines {
 		line.AddSeries(fmt.Sprintf("Видность %d", i), a.lines[i].Data())
 	}
-
 	return line
-}
-
-func findIdxOfMax[T cmp.Ordered](data []T) int {
-	maxIdx := 0
-	for i, v := range data {
-		if v > data[maxIdx] {
-			maxIdx = i
-		}
-	}
-	return maxIdx
 }
