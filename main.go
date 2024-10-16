@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"syscall"
 
+	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
 	"github.com/AnkushinDaniil/interferometer/app"
@@ -28,8 +29,8 @@ const (
 	defaultOutput       = "."
 	defaultTime         = "64"
 	defaultDeltaT       = "0.000001"
-	defaultSpeed        = "1.25"
-	defaultLength       = "0.8"
+	defaultSpeed        = "0.01"
+	defaultLength       = "1.28"
 	defaultLambda       = "0.000001550"
 	defaultPeriodNumber = "1"
 
@@ -52,6 +53,13 @@ func main() {
 		<-quit
 		cancel()
 	}()
+
+	log.SetFormatter(&log.TextFormatter{
+		DisableColors: false,
+		FullTimestamp: true,
+	})
+	log.SetOutput(os.Stdout)
+	log.SetLevel(log.DebugLevel)
 
 	cmd := NewCmd(func(cmd *cobra.Command, _ []string) error {
 		source := cmd.Flag(sourceF).Value.String()

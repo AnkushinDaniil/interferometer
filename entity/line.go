@@ -6,23 +6,18 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"math"
 	"os"
-	"path/filepath"
-	"strings"
-	"sync"
 	"time"
 
 	"github.com/go-echarts/go-echarts/v2/opts"
+	log "github.com/sirupsen/logrus"
 )
 
 type Line struct {
 	name    string
 	data    []opts.LineData
-	minimum int32
 	params  *Parameters
-	winSize int
 	zeroIdx int
 }
 
@@ -44,16 +39,16 @@ func (l *Line) Data() []opts.LineData {
 func (l *Line) SetVisibilityFromFile(filename string) error {
 	timestamp := time.Now()
 	defer func() {
-		fmt.Printf("Visibility data for %s is calculated in %v\n", filename, time.Since(timestamp))
+		log.WithFields(log.Fields{
+			"name": l.name,
+			"time": time.Since(timestamp),
+		}).Debug("Visibility data is calculated")
 	}()
 
-	l.name = strings.TrimSuffix(filename, filepath.Ext(filename))
+	dx := l.params.Speed * l.params.DeltaT
+	winSize := int(l.params.Lambda/dx) * l.params.PeriodNumber
+	log.WithField("winSize", winSize).Debug("Window size is calculated")
 
-	var err error
-	l.minimum, err = findMinimumInFile(filename)
-	if err != nil {
-		return fmt.Errorf("failed to find minimum in file: %w", err)
-	}
 	file, err := os.Open(filename)
 	if err != nil {
 		return fmt.Errorf("failed to open file: %w", err)
@@ -65,71 +60,64 @@ func (l *Line) SetVisibilityFromFile(filename string) error {
 		return fmt.Errorf("failed to get file info: %w", err)
 	}
 	signalLength := fi.Size() / 8
+	log.WithField("signalLength", signalLength).Debug("Signal length is calculated")
 
+	visibilityLength := (int(signalLength) + winSize - 1) / winSize
+	log.WithField("visibilityLength", visibilityLength).Debug("Visibility length is calculated")
+
+	minMax := make([][2]int32, 0, visibilityLength)
 	br := bufio.NewReader(file)
 
 	valueChan := make(chan int32, 1<<10)
-	visibilityChan := make(chan float64, 1<<10)
+	minMaxChan := make(chan [2]int32, 1<<10)
 
-	var wg sync.WaitGroup
-
-	wg.Add(1)
 	go func() {
-		defer close(valueChan)
-		defer wg.Done()
 		readValues(br, valueChan)
 	}()
 
-	wg.Add(1)
 	go func() {
-		defer close(visibilityChan)
-		defer wg.Done()
-		l.calculateVisibility(valueChan, visibilityChan)
+		l.calculateMinMax(valueChan, minMaxChan, winSize)
 	}()
 
-	dx := l.params.Speed * l.params.DeltaT
-	l.winSize = int(l.params.Lambda/dx) * l.params.PeriodNumber
-
-	l.data = make([]opts.LineData, 0, (int(signalLength)+l.winSize)/l.winSize)
-	for visibilityValue := range visibilityChan {
-		l.data = append(l.data, opts.LineData{Value: visibilityValue})
+	minValue := int32(math.MaxInt32)
+	for minMaxValue := range minMaxChan {
+		minMax = append(minMax, minMaxValue)
+		if minMaxValue[0] < minValue {
+			minValue = minMaxValue[0]
+		}
 	}
-	wg.Wait()
+
+	log.WithField("minValue", minValue).Debug("Min value is calculated")
+
+	for i := range minMax {
+		minMax[i][0] -= minValue
+		minMax[i][1] -= minValue
+	}
+
+	log.WithField("minMax length", len(minMax)).Debug("Min and max values are calculated")
+
+	l.data = make([]opts.LineData, 0, visibilityLength)
+	for i := range minMax {
+		diff := float64(minMax[i][1]) - float64(minMax[i][0])
+		sum := float64(minMax[i][1]) + float64(minMax[i][0])
+		visibility := diff / sum
+		l.data = append(l.data, opts.LineData{
+			Value: visibility,
+		})
+	}
+
 	return nil
 }
 
-func findMinimumInFile(filename string) (int32, error) {
-	file, err := os.Open(filename)
-	if err != nil {
-		return 0, fmt.Errorf("failed to open file: %w", err)
-	}
-	defer file.Close()
-	br := bufio.NewReader(file)
-	values := [8]byte{}
-	minimum := int32(0)
-	for {
-		_, err := io.ReadFull(br, values[:])
-		if err != nil {
-			if err != io.EOF {
-				return 0, fmt.Errorf("failed to read values: %w", err)
-			}
-			break
-		}
-		value := int32(binary.BigEndian.Uint64(values[:]))
-		if value < minimum {
-			minimum = value
-		}
-	}
-	return minimum, nil
-}
-
 func readValues(br *bufio.Reader, valueChan chan<- int32) {
+	defer close(valueChan)
+	log.Debug("Reading values")
 	values := [8]byte{}
 	for {
 		_, err := io.ReadFull(br, values[:])
 		if err != nil {
 			if err != io.EOF {
-				log.Fatal(err)
+				log.WithError(err).Error("failed to read values")
 			}
 			break
 		}
@@ -137,34 +125,27 @@ func readValues(br *bufio.Reader, valueChan chan<- int32) {
 	}
 }
 
-func (l *Line) calculateVisibility(valueChan <-chan int32, visibilityChan chan<- float64) {
+func (l *Line) calculateMinMax(
+	valueChan <-chan int32,
+	minMaxChan chan<- [2]int32,
+	winSize int,
+) {
+	defer close(minMaxChan)
+	log.Debug("Calculating min and max values")
 	i := 0
-	j := 0
-	maxVisibility := float64(0)
-	minimum, maximum := int32(math.MaxInt32), int32(0)
+	winMin, winMax := int32(math.MaxInt32), int32(math.MinInt32)
 	for value := range valueChan {
-		value -= l.minimum
-		if value < minimum {
-			minimum = value
+		if value < winMin {
+			winMin = value
 		}
-		if value > maximum {
-			maximum = value
+		if value > winMax {
+			winMax = value
 		}
 		i++
-		if i == l.winSize {
-			visibilityValue := float64(maximum-minimum) / float64(maximum+minimum)
-			if visibilityValue > maxVisibility {
-				maxVisibility = visibilityValue
-				l.zeroIdx = j
-			}
-			visibilityChan <- visibilityValue
-
+		if i == winSize {
+			minMaxChan <- [2]int32{winMin, winMax}
+			winMin, winMax = int32(math.MaxInt32), int32(math.MinInt32)
 			i = 0
-			minimum, maximum = math.MaxInt32, int32(0)
 		}
 	}
-}
-
-func (l *Line) GetZeroIdx() int {
-	return l.zeroIdx
 }

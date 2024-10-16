@@ -1,10 +1,4 @@
 linters-settings:
-  depguard:
-    rules:
-      logger:
-        deny:
-          - pkg: github.com/sirupsen/logrus
-            desc: use github.com/NethermindEth/juno/utils for logging
   dupl:
     threshold: 100
   funlen:

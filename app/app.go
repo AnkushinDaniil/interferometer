@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/go-echarts/go-echarts/v2/charts"
 	"github.com/go-echarts/go-echarts/v2/opts"
+	log "github.com/sirupsen/logrus"
 
 	"github.com/AnkushinDaniil/interferometer/entity"
 )
@@ -17,7 +19,7 @@ type App struct {
 	Source    string
 	Output    string
 	Params    *entity.Parameters
-	filenames []string
+	filePaths []string
 	lines     []*entity.Line
 }
 
@@ -32,78 +34,105 @@ func New(source, output string, params *entity.Parameters) *App {
 func (a *App) Run(ctx context.Context) error {
 	appTime := time.Now()
 	defer func() {
-		fmt.Printf("App finished in %v\n", time.Since(appTime))
+		log.WithField("time", time.Since(appTime)).Debug("App finished")
 	}()
-	if err := a.getFilenames(); err != nil {
+	log.Info("App started")
+	log.WithFields(log.Fields{
+		"source": a.Source,
+		"output": a.Output,
+		"time":   a.Params.Time,
+		"length": a.Params.Length,
+		"speed":  a.Params.Speed,
+		"deltaT": a.Params.DeltaT,
+		"Lambda": a.Params.Lambda,
+	}).Debug("App started")
+	filePaths, err := getFilenames(a.Source)
+	if err != nil {
 		return fmt.Errorf("failed to get filenames: %w", err)
 	}
 
-	a.lines = make([]*entity.Line, len(a.filenames))
-	var err error
-	for i, filename := range a.filenames {
-		a.lines[i], err = entity.NewLine(
-			filename, a.Params,
+	a.lines = make([]*entity.Line, 0, len(a.filePaths))
+	for _, filePath := range filePaths {
+		log.WithField("name", filePath).Debug("Creating line")
+		line, err := entity.NewLine(
+			strings.TrimSuffix(filePath, filepath.Ext(filePath)),
+			a.Params,
 		)
-		a.lines[i].SetVisibilityFromFile(filename)
+		if err != nil {
+			return fmt.Errorf("failed to create line: %w", err)
+		}
+		log.Debug("Line created")
+		err = line.SetVisibilityFromFile(filePath)
 		if err != nil {
 			return fmt.Errorf("failed to get visibility data: %w", err)
 		}
-		fmt.Printf("Visibility data for %s is calculated\n", filename)
+		a.lines = append(a.lines, line)
+		log.WithField("name", line.Name()).Info("Visibility data is calculated")
 	}
 
 	line := a.createChart()
-	fmt.Println("Chart created")
+	log.Info("Chart created")
 
-	f, _ := os.Create(a.Output)
+	f, err := os.Create(a.Output)
+	if err != nil {
+		return fmt.Errorf("failed to create file: %w", err)
+	}
 	defer f.Close()
+	renderTime := time.Now()
 	if err := line.Render(f); err != nil {
 		return fmt.Errorf("failed to render chart: %w", err)
 	}
-	fmt.Println("Chart saved")
+	log.WithField("time", time.Since(renderTime)).Info("Chart rendered")
+	log.Info("Chart saved")
 
 	return nil
 }
 
-func (a *App) getFilenames() error {
-	dir, err := os.Open(a.Source)
+func getFilenames(source string) ([]string, error) {
+	dir, err := os.Open(source)
 	if err != nil {
-		return fmt.Errorf("failed to open directory: %w", err)
+		return nil, fmt.Errorf("failed to open directory: %w", err)
 	}
 	defer dir.Close()
 
 	fileInfo, err := dir.Stat()
 	if err != nil {
-		return fmt.Errorf("failed to get file info: %w", err)
+		return nil, fmt.Errorf("failed to get file info: %w", err)
 	}
 
-	a.filenames = make([]string, 0)
+	filePaths := make([]string, 0)
 
 	if fileInfo.IsDir() {
-		if filepath.Ext(fileInfo.Name()) == ".bin" {
-			a.filenames = append(a.filenames, fileInfo.Name())
-			fmt.Printf("Found file: %s\n", fileInfo.Name())
-		}
-	} else {
 		files, err := dir.Readdir(0)
 		if err != nil {
-			return fmt.Errorf("failed to read directory: %w", err)
+			return nil, fmt.Errorf("failed to read directory: %w", err)
 		}
-		for _, v := range files {
-			if filepath.Ext(v.Name()) == ".bin" {
-				a.filenames = append(a.filenames, v.Name())
-				fmt.Printf("Found file: %s\n", v.Name())
+		for _, fileInfo := range files {
+			if filepath.Ext(fileInfo.Name()) == ".bin" {
+				filePaths = append(filePaths, filepath.Join(source, fileInfo.Name()))
+				log.WithField("name", fileInfo.Name()).Debug("Found file")
 			}
 		}
+	} else if filepath.Ext(fileInfo.Name()) == ".bin" {
+		filePaths = append(filePaths, source)
+		log.WithField("name", fileInfo.Name()).Debug("Found file")
 	}
 
-	if len(a.filenames) == 0 {
-		return fmt.Errorf("no files found in directory")
+	if len(filePaths) == 0 {
+		return nil, fmt.Errorf("no files found in directory")
 	}
 
-	return nil
+	return filePaths, nil
 }
 
 func (a *App) createChart() *charts.Line {
+	startTime := time.Now()
+	defer func() {
+		log.WithFields(log.Fields{
+			"time":  time.Since(startTime),
+			"lines": len(a.lines),
+		}).Debug("Creating chart")
+	}()
 	line := charts.NewLine()
 
 	line.SetGlobalOptions(
@@ -188,7 +217,7 @@ func (a *App) createChart() *charts.Line {
 
 	x := make([]float64, len(a.lines[0].Data()))
 	dx := a.Params.Length / float64(len(a.lines[0].Data()))
-	zeroIdx := a.lines[0].GetZeroIdx()
+	zeroIdx := getMaxIdx(a.lines[0].Data())
 	for i := range a.lines[0].Data() {
 		x[i] = float64(i-zeroIdx) * dx
 	}
@@ -198,4 +227,14 @@ func (a *App) createChart() *charts.Line {
 		line.AddSeries(fmt.Sprintf("Видность %s", a.lines[i].Name()), a.lines[i].Data())
 	}
 	return line
+}
+
+func getMaxIdx(data []opts.LineData) int {
+	maxIdx := 0
+	for i, d := range data {
+		if d.Value.(float64) > data[maxIdx].Value.(float64) {
+			maxIdx = i
+		}
+	}
+	return maxIdx
 }
