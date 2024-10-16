@@ -48,6 +48,7 @@ func (a *App) Run(ctx context.Context) error {
 		return fmt.Errorf("failed to get filenames: %w", err)
 	}
 
+	lines := linesFromFiles(filePaths, a.Params)
 	lines := make([]*entity.Line, 0, len(filePaths))
 	for _, filePath := range filePaths {
 		log.WithField("name", filePath).Debug("Creating line")
@@ -120,6 +121,23 @@ func getFilenames(source string) ([]string, error) {
 	}
 
 	return filePaths, nil
+}
+
+func linesFromFiles(filePaths []string, params *entity.Parameters) ([]*entity.Line, error) {
+	lines := make([]*entity.Line, 0, len(filePaths))
+	for _, filePath := range filePaths {
+		log.WithField("name", filePath).Debug("Creating line")
+		line, err := entity.NewLine(
+			strings.TrimSuffix(filePath, filepath.Ext(filePath)),
+			params,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create line: %w", err)
+		}
+		log.Debug("Line created")
+		lines = append(lines, line)
+	}
+	return lines, nil
 }
 
 func (a *App) createChart(lines []*entity.Line) *charts.Line {
