@@ -16,11 +16,9 @@ import (
 )
 
 type App struct {
-	Source    string
-	Output    string
-	Params    *entity.Parameters
-	filePaths []string
-	lines     []*entity.Line
+	Source string
+	Output string
+	Params *entity.Parameters
 }
 
 func New(source, output string, params *entity.Parameters) *App {
@@ -36,7 +34,6 @@ func (a *App) Run(ctx context.Context) error {
 	defer func() {
 		log.WithField("time", time.Since(appTime)).Debug("App finished")
 	}()
-	log.Info("App started")
 	log.WithFields(log.Fields{
 		"source": a.Source,
 		"output": a.Output,
@@ -51,7 +48,7 @@ func (a *App) Run(ctx context.Context) error {
 		return fmt.Errorf("failed to get filenames: %w", err)
 	}
 
-	a.lines = make([]*entity.Line, 0, len(a.filePaths))
+	lines := make([]*entity.Line, 0, len(filePaths))
 	for _, filePath := range filePaths {
 		log.WithField("name", filePath).Debug("Creating line")
 		line, err := entity.NewLine(
@@ -66,11 +63,11 @@ func (a *App) Run(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("failed to get visibility data: %w", err)
 		}
-		a.lines = append(a.lines, line)
+		lines = append(lines, line)
 		log.WithField("name", line.Name()).Info("Visibility data is calculated")
 	}
 
-	line := a.createChart()
+	line := a.createChart(lines)
 	log.Info("Chart created")
 
 	f, err := os.Create(a.Output)
@@ -125,12 +122,12 @@ func getFilenames(source string) ([]string, error) {
 	return filePaths, nil
 }
 
-func (a *App) createChart() *charts.Line {
+func (a *App) createChart(lines []*entity.Line) *charts.Line {
 	startTime := time.Now()
 	defer func() {
 		log.WithFields(log.Fields{
 			"time":  time.Since(startTime),
-			"lines": len(a.lines),
+			"lines": len(lines),
 		}).Debug("Creating chart")
 	}()
 	line := charts.NewLine()
@@ -215,16 +212,16 @@ func (a *App) createChart() *charts.Line {
 		}),
 	)
 
-	x := make([]float64, len(a.lines[0].Data()))
-	dx := a.Params.Length / float64(len(a.lines[0].Data()))
-	zeroIdx := getMaxIdx(a.lines[0].Data())
-	for i := range a.lines[0].Data() {
+	x := make([]float64, len(lines[0].Data()))
+	dx := a.Params.Length / float64(len(lines[0].Data()))
+	zeroIdx := getMaxIdx(lines[0].Data())
+	for i := range lines[0].Data() {
 		x[i] = float64(i-zeroIdx) * dx
 	}
 	line.SetXAxis(x)
 
-	for i := range a.lines {
-		line.AddSeries(fmt.Sprintf("Видность %s", a.lines[i].Name()), a.lines[i].Data())
+	for i := range lines {
+		line.AddSeries(fmt.Sprintf("Видность %s", lines[i].Name()), lines[i].Data())
 	}
 	return line
 }
