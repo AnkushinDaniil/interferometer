@@ -68,16 +68,16 @@ func (l *Line) SetVisibilityFromFile(filename string) error {
 	minMax := make([][2]int32, 0, visibilityLength)
 	br := bufio.NewReader(file)
 
-	valueChan := make(chan int32, 1<<10)
-	minMaxChan := make(chan [2]int32, 1<<10)
+	valueChan := make(chan int32, 1024)
+	minMaxChan := make(chan [2]int32, 1024)
 
 	go func() {
-		readValues(br, valueChan)
+		if err := readValues(br, valueChan); err != nil {
+			log.WithError(err).Error("Error reading values")
+		}
 	}()
 
-	go func() {
-		l.calculateMinMax(valueChan, minMaxChan, winSize)
-	}()
+	go l.calculateMinMax(valueChan, minMaxChan, winSize)
 
 	minValue := int32(math.MaxInt32)
 	for minMaxValue := range minMaxChan {
@@ -89,6 +89,7 @@ func (l *Line) SetVisibilityFromFile(filename string) error {
 
 	log.WithField("minValue", minValue).Debug("Min value is calculated")
 
+	// Adjust min-max values in bulk to improve efficiency
 	for i := range minMax {
 		minMax[i][0] -= minValue
 		minMax[i][1] -= minValue
@@ -97,10 +98,15 @@ func (l *Line) SetVisibilityFromFile(filename string) error {
 	log.WithField("minMax length", len(minMax)).Debug("Min and max values are calculated")
 
 	l.data = make([]opts.LineData, 0, visibilityLength)
-	for i := range minMax {
-		diff := float64(minMax[i][1]) - float64(minMax[i][0])
-		sum := float64(minMax[i][1]) + float64(minMax[i][0])
-		visibility := diff / sum
+	for _, mm := range minMax {
+		diff := float64(mm[1]) - float64(mm[0])
+		sum := float64(mm[1]) + float64(mm[0])
+
+		visibility := 0.0
+		if sum != 0 {
+			visibility = diff / sum
+		}
+
 		l.data = append(l.data, opts.LineData{
 			Value: visibility,
 		})
@@ -109,20 +115,21 @@ func (l *Line) SetVisibilityFromFile(filename string) error {
 	return nil
 }
 
-func readValues(br *bufio.Reader, valueChan chan<- int32) {
+func readValues(br *bufio.Reader, valueChan chan<- int32) error {
 	defer close(valueChan)
 	log.Debug("Reading values")
 	values := [8]byte{}
 	for {
 		_, err := io.ReadFull(br, values[:])
 		if err != nil {
-			if err != io.EOF {
-				log.WithError(err).Error("failed to read values")
+			if err == io.EOF {
+				break
 			}
-			break
+			return fmt.Errorf("failed to read values: %w", err)
 		}
 		valueChan <- int32(binary.BigEndian.Uint64(values[:]))
 	}
+	return nil
 }
 
 func (l *Line) calculateMinMax(
