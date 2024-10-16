@@ -43,29 +43,15 @@ func (a *App) Run(ctx context.Context) error {
 		"deltaT": a.Params.DeltaT,
 		"Lambda": a.Params.Lambda,
 	}).Debug("App started")
+
 	filePaths, err := getFilenames(a.Source)
 	if err != nil {
 		return fmt.Errorf("failed to get filenames: %w", err)
 	}
 
-	lines := linesFromFiles(filePaths, a.Params)
-	lines := make([]*entity.Line, 0, len(filePaths))
-	for _, filePath := range filePaths {
-		log.WithField("name", filePath).Debug("Creating line")
-		line, err := entity.NewLine(
-			strings.TrimSuffix(filePath, filepath.Ext(filePath)),
-			a.Params,
-		)
-		if err != nil {
-			return fmt.Errorf("failed to create line: %w", err)
-		}
-		log.Debug("Line created")
-		err = line.SetVisibilityFromFile(filePath)
-		if err != nil {
-			return fmt.Errorf("failed to get visibility data: %w", err)
-		}
-		lines = append(lines, line)
-		log.WithField("name", line.Name()).Info("Visibility data is calculated")
+	lines, err := linesFromFiles(filePaths, a.Params)
+	if err != nil {
+		return fmt.Errorf("failed to get lines from files: %w", err)
 	}
 
 	line := a.createChart(lines)
@@ -76,12 +62,12 @@ func (a *App) Run(ctx context.Context) error {
 		return fmt.Errorf("failed to create file: %w", err)
 	}
 	defer f.Close()
+
 	renderTime := time.Now()
 	if err := line.Render(f); err != nil {
 		return fmt.Errorf("failed to render chart: %w", err)
 	}
-	log.WithField("time", time.Since(renderTime)).Info("Chart rendered")
-	log.Info("Chart saved")
+	log.WithField("time", time.Since(renderTime)).Info("Chart rendered and saved")
 
 	return nil
 }

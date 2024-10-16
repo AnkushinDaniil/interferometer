@@ -119,10 +119,5 @@ linters:
   # - revive
   # - wsl
 
-issues: 
-      - linters:
-        - lll
-      source: "^//go:generate "
-
 run:
   timeout: 5m
