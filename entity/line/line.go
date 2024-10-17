@@ -1,4 +1,4 @@
-package entity
+package line
 
 import (
 	"bufio"

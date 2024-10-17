@@ -13,15 +13,16 @@ import (
 	log "github.com/sirupsen/logrus"
 
 	"github.com/AnkushinDaniil/interferometer/entity"
+	"github.com/AnkushinDaniil/interferometer/entity/parameters"
 )
 
 type App struct {
 	Source string
 	Output string
-	Params *entity.Parameters
+	Params *parameters.Parameters
 }
 
-func New(source, output string, params *entity.Parameters) *App {
+func New(source, output string, params *parameters.Parameters) *App {
 	return &App{
 		Source: source,
 		Output: output,
@@ -109,7 +110,7 @@ func getFilenames(source string) ([]string, error) {
 	return filePaths, nil
 }
 
-func linesFromFiles(filePaths []string, params *entity.Parameters) ([]*entity.Line, error) {
+func linesFromFiles(filePaths []string, params *parameters.Parameters) ([]*entity.Line, error) {
 	lines := make([]*entity.Line, 0, len(filePaths))
 	for _, filePath := range filePaths {
 		log.WithField("name", filePath).Debug("Creating line")

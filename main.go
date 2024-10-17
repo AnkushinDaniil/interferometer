@@ -12,10 +12,14 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/AnkushinDaniil/interferometer/app"
-	"github.com/AnkushinDaniil/interferometer/entity"
+	"github.com/AnkushinDaniil/interferometer/entity/format"
+	"github.com/AnkushinDaniil/interferometer/entity/mode"
+	"github.com/AnkushinDaniil/interferometer/entity/parameters"
 )
 
 const (
+	modeF         = "mode"
+	formatF       = "format"
 	sourceF       = "source"
 	outputF       = "output"
 	timeF         = "time"
@@ -25,6 +29,8 @@ const (
 	lambdaF       = "lambda"
 	periodNumberF = "periodNumber"
 
+	defaultMode         = "v"
+	defaultFormat       = "html"
 	defaultSource       = "."
 	defaultOutput       = "."
 	defaultTime         = "64"
@@ -34,6 +40,8 @@ const (
 	defaultLambda       = "0.000001550"
 	defaultPeriodNumber = "1"
 
+	modeFlagUsage         = "The mode of the output"
+	formatFlagUsage       = "The format of the output"
 	sourceFlagUsage       = "The direcory with source files or a single file"
 	outputFlagUsage       = "The output directory"
 	timeFlagUsage         = "The time of the signal"
@@ -62,6 +70,14 @@ func main() {
 	log.SetLevel(log.DebugLevel)
 
 	cmd := NewCmd(func(cmd *cobra.Command, _ []string) error {
+		mode, err := mode.UnmarshalText(cmd.Flag(modeF).Value.String())
+		if err != nil {
+			return fmt.Errorf("failed to parse mode: %w", err)
+		}
+		format, err := format.UnmarshalText(cmd.Flag(formatF).Value.String())
+		if err != nil {
+			return fmt.Errorf("failed to parse format: %w", err)
+		}
 		source := cmd.Flag(sourceF).Value.String()
 		output := cmd.Flag(outputF).Value.String()
 		t, err := strconv.ParseFloat(cmd.Flag(timeF).Value.String(), 64)
@@ -90,7 +106,9 @@ func main() {
 		}
 
 		app := app.New(source, output,
-			&entity.Parameters{
+			&parameters.Parameters{
+				Mode:         mode,
+				Format:       format,
 				Time:         t,
 				DeltaT:       deltaT,
 				Speed:        speed,
